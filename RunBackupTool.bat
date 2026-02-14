@@ -21,12 +21,12 @@ if not exist "%SCRIPT_DIR%AdvancedFolderBackup_v2.ps1" (
     exit /b 1
 )
 
-echo Starting Advanced Folder Backup Tool...
+echo Starting Advanced Folder Backup Tool in background...
+echo The tray icon will appear in your system tray.
 echo.
 
-REM Elevate to admin for task creation
-REM Request admin elevation
-powershell -Command "Start-Process PowerShell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -File \"%SCRIPT_DIR%AdvancedFolderBackup_v2.ps1\" -Mode Setup'"
+REM Run PowerShell with hidden window (no console visible)
+powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File "%SCRIPT_DIR%AdvancedFolderBackup_v2.ps1" -Mode Background
 
 echo.
 echo Script execution completed.

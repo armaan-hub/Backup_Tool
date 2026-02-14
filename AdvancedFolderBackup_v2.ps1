@@ -1028,6 +1028,10 @@ function Start-BackgroundMode {
     
     Write-Log "Ready - waiting for file changes in source folder..."
     
+    # Initialize Windows.Forms for system tray (message pump)
+    [void][System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+    [System.Windows.Forms.Application]::EnableVisualStyles()
+    
     # Create system tray icon
     Write-Log "Creating system tray icon..."
     New-NotifyIcon -Config $Config
