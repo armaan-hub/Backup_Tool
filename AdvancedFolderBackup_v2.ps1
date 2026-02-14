@@ -49,7 +49,7 @@
 
 param(
     [Parameter(Mandatory = $false)]
-    [ValidateSet("Setup", "Background", "Auto")]
+    [ValidateSet("Setup", "Background", "Auto", "Control")]
     [string]$Mode = "Auto",
     
     [Parameter(Mandatory = $false)]
@@ -63,7 +63,11 @@ param(
     
     [Parameter(Mandatory = $false)]
     [ValidateRange(1, 365)]
-    [int]$DaysToKeep = $null
+    [int]$DaysToKeep = $null,
+    
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("Start", "Stop", "Restart", "Status")]
+    [string]$Control = $null
 )
 
 # ============================================================================
@@ -512,6 +516,158 @@ function New-ScheduledTask {
         Write-Log "Error creating scheduled task: $($_.Exception.Message)" "ERROR"
         Write-Host "Note: If Task Scheduler creation fails on domain-joined computers, you may need to run with domain admin rights." -ForegroundColor Yellow
         return $false
+    }
+}
+
+# ============================================================================
+# SERVICE CONTROL - START/STOP
+# ============================================================================
+
+function Stop-BackupService {
+    param([BackupConfig]$Config)
+    
+    try {
+        Write-Log "Stopping backup service..."
+        Write-Host "`nStopping backup service..." -ForegroundColor Yellow
+        
+        # Stop all running instances of the script
+        Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object {
+            $_.CommandLine -like "*AdvancedFolderBackup*" -and $_.Id -ne $PID
+        } | Stop-Process -Force -ErrorAction SilentlyContinue
+        
+        # Disable scheduled task
+        $task = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
+        if ($task) {
+            Disable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null
+            Write-Log "Scheduled task disabled: $script:TaskName"
+            Write-Host "✓ Scheduled task disabled" -ForegroundColor Green
+        }
+        
+        # Clean up file watchers and resources
+        Get-EventSubscriber | Unregister-Event -ErrorAction SilentlyContinue
+        
+        Write-Log "Backup service stopped successfully"
+        Write-Host "✓ Backup service stopped" -ForegroundColor Green
+        Write-Host "  To restart: Run this script again or wait for next scheduled startup" -ForegroundColor Gray
+        return $true
+    }
+    catch {
+        Write-Log "Error stopping backup service: $($_.Exception.Message)" "ERROR"
+        Write-Host "Error stopping service: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+function Start-BackupService {
+    param([BackupConfig]$Config)
+    
+    try {
+        Write-Log "Starting backup service..."
+        Write-Host "`nStarting backup service..." -ForegroundColor Yellow
+        
+        # Enable scheduled task
+        $task = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
+        if ($task) {
+            Enable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null
+            Write-Log "Scheduled task enabled: $script:TaskName"
+            Write-Host "✓ Scheduled task enabled" -ForegroundColor Green
+            
+            # Run task immediately
+            Start-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
+            Write-Log "Scheduled task started immediately"
+            Write-Host "✓ Backup service started (running in background)" -ForegroundColor Green
+            Write-Host "  Monitor progress in BackupLog.txt" -ForegroundColor Gray
+        }
+        else {
+            Write-Log "Scheduled task not found: $script:TaskName"
+            Write-Host "Scheduled task not found. Setting up now..." -ForegroundColor Yellow
+            New-ScheduledTask
+            Write-Host "✓ Backup service created and started" -ForegroundColor Green
+        }
+        
+        return $true
+    }
+    catch {
+        Write-Log "Error starting backup service: $($_.Exception.Message)" "ERROR"
+        Write-Host "Error starting service: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+function Show-ServiceControlMenu {
+    param([BackupConfig]$Config)
+    
+    while ($true) {
+        Write-Host "`n" -ForegroundColor Gray
+        Write-Host "="*60 -ForegroundColor Cyan
+        Write-Host "SERVICE CONTROL MENU" -ForegroundColor Cyan
+        Write-Host "="*60 -ForegroundColor Cyan
+        
+        # Check service status
+        $task = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
+        $status = if ($task.Enabled) { "✓ RUNNING" } else { "✗ STOPPED" }
+        
+        Write-Host "`nService Status: " -ForegroundColor Yellow -NoNewline
+        if ($task.Enabled) {
+            Write-Host $status -ForegroundColor Green
+        }
+        else {
+            Write-Host $status -ForegroundColor Red
+        }
+        
+        Write-Host "`nOptions:" -ForegroundColor Yellow
+        Write-Host "  (1) Start Backup Service" -ForegroundColor Cyan
+        Write-Host "  (2) Stop Backup Service" -ForegroundColor Cyan
+        Write-Host "  (3) Restart Backup Service" -ForegroundColor Cyan
+        Write-Host "  (4) View Service Log" -ForegroundColor Cyan
+        Write-Host "  (5) Back to Main Menu" -ForegroundColor Cyan
+        Write-Host "`n" -ForegroundColor Gray
+        
+        $choice = Read-Host "Select option (1-5)"
+        
+        switch ($choice) {
+            "1" { 
+                if ($task.Enabled) {
+                    Write-Host "Service is already running." -ForegroundColor Yellow
+                }
+                else {
+                    Start-BackupService -Config $Config
+                    Read-Host "`nPress Enter to continue"
+                }
+            }
+            "2" { 
+                if (-not $task.Enabled) {
+                    Write-Host "Service is already stopped." -ForegroundColor Yellow
+                }
+                else {
+                    $confirm = Read-Host "Are you sure you want to stop the backup service? (yes/no)"
+                    if ($confirm -eq 'yes') {
+                        Stop-BackupService -Config $Config
+                    }
+                    Read-Host "`nPress Enter to continue"
+                }
+            }
+            "3" { 
+                Write-Host "Restarting backup service..." -ForegroundColor Yellow
+                Stop-BackupService -Config $Config
+                Start-Sleep -Seconds 2
+                Start-BackupService -Config $Config
+                Read-Host "`nPress Enter to continue"
+            }
+            "4" { 
+                $logPath = Join-Path (Split-Path -Parent $script:ConfigFile) "BackupLog.txt"
+                if (Test-Path $logPath) {
+                    Write-Host "`nRecent log entries:" -ForegroundColor Yellow
+                    Get-Content -Path $logPath -Tail 20
+                }
+                else {
+                    Write-Host "Log file not found" -ForegroundColor Red
+                }
+                Read-Host "`nPress Enter to continue"
+            }
+            "5" { return }
+            default { Write-Host "Invalid option. Try again." -ForegroundColor Red }
+        }
     }
 }
 
@@ -1348,16 +1504,67 @@ function Show-SettingsMenu {
         Write-Host "  (1) Change Source Folder" -ForegroundColor Cyan
         Write-Host "  (2) Change Destination Folder" -ForegroundColor Cyan
         Write-Host "  (3) Change Retention Days" -ForegroundColor Cyan
-        Write-Host "  (4) Back to Main Menu" -ForegroundColor Cyan
+        Write-Host "  (4) Service Control" -ForegroundColor Cyan
+        Write-Host "  (5) Back to Main Menu" -ForegroundColor Cyan
         Write-Host "`n" -ForegroundColor Gray
         
-        $choice = Read-Host "Select option (1-4)"
+        $choice = Read-Host "Select option (1-5)"
         
         switch ($choice) {
             "1" { $newConfig = Update-BackupSourcePath -Config $Config; if ($newConfig) { $Config = $newConfig } }
             "2" { $newConfig = Update-BackupDestinationPath -Config $Config; if ($newConfig) { $Config = $newConfig } }
             "3" { $newConfig = Update-RetentionDays -Config $Config; if ($newConfig) { $Config = $newConfig } }
-            "4" { return $Config }
+            "4" { Show-ServiceControlMenu -Config $Config }
+            "5" { return $Config }
+            default { Write-Host "Invalid option. Try again." -ForegroundColor Red }
+        }
+    }
+}
+
+function Show-MainMenu {
+    param([BackupConfig]$Config)
+    
+    while ($true) {
+        Write-Host "`n" -ForegroundColor Gray
+        Write-Host "="*60 -ForegroundColor Green
+        Write-Host "ADVANCED FOLDER BACKUP TOOL v2.0" -ForegroundColor Green
+        Write-Host "="*60 -ForegroundColor Green
+        
+        # Check service status
+        $task = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
+        $status = if ($task -and $task.Enabled) { "✓ RUNNING" } else { "✗ STOPPED" }
+        Write-Host "`nService Status: " -ForegroundColor Yellow -NoNewline
+        if ($task -and $task.Enabled) {
+            Write-Host $status -ForegroundColor Green
+        }
+        else {
+            Write-Host $status -ForegroundColor Red
+        }
+        
+        Write-Host "`nOptions:" -ForegroundColor Yellow
+        Write-Host "  (1) Settings & Configuration" -ForegroundColor Cyan
+        Write-Host "  (2) Service Control (Start/Stop)" -ForegroundColor Cyan
+        Write-Host "  (3) View Service Log" -ForegroundColor Cyan
+        Write-Host "  (4) Exit" -ForegroundColor Cyan
+        Write-Host "`n" -ForegroundColor Gray
+        
+        $choice = Read-Host "Select option (1-4)"
+        
+        switch ($choice) {
+            "1" { $Config = Show-SettingsMenu -Config $Config }
+            "2" { Show-ServiceControlMenu -Config $Config }
+            "3" { 
+                $logPath = Join-Path (Split-Path -Parent $script:ConfigFile) "BackupLog.txt"
+                if (Test-Path $logPath) {
+                    Write-Host "`nRecent log entries:" -ForegroundColor Yellow
+                    Get-Content -Path $logPath -Tail 30
+                }
+                else {
+                    Write-Host "Log file not found" -ForegroundColor Red
+                }
+                Read-Host "`nPress Enter to continue"
+            }
+            "4" { return }
             default { Write-Host "Invalid option. Try again." -ForegroundColor Red }
         }
     }
@@ -1370,7 +1577,7 @@ function Show-SettingsMenu {
 function Main {
     Write-Log "=== Advanced Folder Backup Tool Started ==="
     Write-Log "Version: 2.0 - Cross-Computer Compatible"
-    Write-Log "Mode: $Mode"
+    Write-Log "Mode: $Mode | Control: $Control"
     Write-Log "Script Path: $script:ScriptPath"
     Write-Log "Config Path: $script:ConfigFile"
     
@@ -1380,6 +1587,47 @@ function Main {
     # Get configuration
     $config = Get-BackupConfig
     
+    # Handle Control Parameter (Start/Stop/Restart/Status)
+    if ($Control) {
+        if (-not $config) {
+            Write-Host "Configuration not found. Please run setup first." -ForegroundColor Red
+            Write-Log "Control command failed: Configuration not found"
+            exit 1
+        }
+        
+        switch ($Control) {
+            "Start" {
+                Start-AsAdministrator
+                Start-BackupService -Config $config
+                exit 0
+            }
+            "Stop" {
+                Start-AsAdministrator
+                Stop-BackupService -Config $config
+                exit 0
+            }
+            "Restart" {
+                Start-AsAdministrator
+                Stop-BackupService -Config $config
+                Start-Sleep -Seconds 2
+                Start-BackupService -Config $config
+                exit 0
+            }
+            "Status" {
+                $task = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
+                if ($task) {
+                    $statusText = if ($task.Enabled) { "RUNNING" } else { "STOPPED" }
+                    Write-Host "Service Status: $statusText" -ForegroundColor $(if ($task.Enabled) { "Green" } else { "Yellow" })
+                }
+                else {
+                    Write-Host "Service not configured" -ForegroundColor Yellow
+                }
+                exit 0
+            }
+        }
+    }
+    
+    # Handle Interactive Modes
     if ($isFirstRun -and $Mode -ne "Background") {
         # First-time setup
         Write-Log "First run detected - Running first-time setup"
@@ -1491,17 +1739,49 @@ function Main {
         Start-BackgroundMode -Config $config
     }
     else {
-        # Auto Mode - Check if scheduled task exists
-        if (Test-ScheduledTask) {
-            Write-Log "Scheduled task exists. Running in background mode."
+        # Auto Mode - Show interactive menu or run in background
+        if ($Mode -eq "Background") {
+            # Direct background mode
+            if (-not $config) {
+                Write-Log "Configuration not found. Please run setup first." "ERROR"
+                exit 1
+            }
+            
+            # Validate configuration
+            if (-not (Test-Path $config.SourcePath)) {
+                Write-Log "Source path not found: $($config.SourcePath)" "ERROR"
+                exit 1
+            }
+            
             Start-BackgroundMode -Config $config
         }
+        elseif ($config -and (Test-ScheduledTask)) {
+            # Configuration exists and scheduled task is set up
+            if ($Mode -eq "Auto") {
+                # Show interactive menu
+                Show-MainMenu -Config $config
+            }
+        }
         else {
-            Write-Log "No scheduled task found. Running setup mode."
-            Start-AsAdministrator
-            $config = Start-SetupMode
-            if ($config) {
-                Write-Host "`nSetup complete. The backup service is now configured and will start automatically." -ForegroundColor Green
+            # No configuration or scheduled task
+            if ($Mode -eq "Auto") {
+                Write-Log "No scheduled task or configuration found. Showing setup/control menu."
+                if ($config) {
+                    Show-MainMenu -Config $config
+                }
+                else {
+                    Write-Log "No scheduled task found. Running setup mode."
+                    Start-AsAdministrator
+                    $config = Start-SetupMode
+                    if ($config) {
+                        Write-Host "`nSetup complete. The backup service is now configured and will start automatically." -ForegroundColor Green
+                    }
+                }
+            }
+            else {
+                Write-Log "Configuration not found. Running setup mode."
+                Start-AsAdministrator
+                $config = Start-SetupMode
             }
         }
     }
