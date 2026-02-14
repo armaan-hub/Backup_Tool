@@ -734,25 +734,15 @@ function Copy-FileWithRetry {
         try {
             if (Test-FileReady -FilePath $SourcePath) {
                 # Use robocopy for faster, multi-threaded transfer with resume capability
-                # /Z: Resumable mode (for interrupted transfers)
-                # /R:3: Retry 3 times on failed files
-                # /W:2: Wait 2 seconds between retries
-                # /NJH /NJS: No job header/summary (cleaner logging)
-                $robocopyArgs = @(
-                    '"' + (Split-Path -Parent $SourcePath) + '"',
-                    '"' + $destDir + '"',
-                    '"' + (Split-Item -Leaf $SourcePath) + '"',
-                    '/Z',
-                    '/R:3',
-                    '/W:2',
-                    '/NJH',
-                    '/NJS'
-                )
+                # Extract source directory and filename
+                $sourceDir = Split-Path -Parent $SourcePath
+                $sourceFile = Split-Path -Leaf $SourcePath
                 
-                $output = & robocopy $robocopyArgs 2>&1
+                # Run robocopy with proper argument passing
+                $output = & robocopy "$sourceDir" "$destDir" "$sourceFile" /Z /R:3 /W:2 /NJH /NJS 2>&1
                 
-                # robocopy exit codes: 0,1 = success, 16 = failure
-                if ($LASTEXITCODE -le 1 -or $LASTEXITCODE -eq 2) {
+                # robocopy exit codes: 0,1,2 = success, 3+ = partial/failure
+                if ($LASTEXITCODE -le 2) {
                     Write-Log "File copied via robocopy: $SourcePath" "INFO"
                     
                     # Check if backup is in cloud drive and free up space
