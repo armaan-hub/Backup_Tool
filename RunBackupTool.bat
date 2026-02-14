@@ -15,8 +15,8 @@ REM Get the directory where this batch file is located
 set SCRIPT_DIR=%~dp0
 
 REM Check if the PowerShell script exists
-if not exist "%SCRIPT_DIR%AdvancedFolderBackup.ps1" (
-    echo AdvancedFolderBackup.ps1 not found in the current directory.
+if not exist "%SCRIPT_DIR%AdvancedFolderBackup_v2.ps1" (
+    echo AdvancedFolderBackup_v2.ps1 not found in the current directory.
     pause
     exit /b 1
 )
@@ -24,8 +24,9 @@ if not exist "%SCRIPT_DIR%AdvancedFolderBackup.ps1" (
 echo Starting Advanced Folder Backup Tool...
 echo.
 
-REM Run the PowerShell script with bypass execution policy
-powershell.exe -ExecutionPolicy Bypass -File "%SCRIPT_DIR%AdvancedFolderBackup.ps1"
+REM Elevate to admin for task creation
+REM Request admin elevation
+powershell -Command "Start-Process PowerShell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -File \"%SCRIPT_DIR%AdvancedFolderBackup_v2.ps1\" -Mode Setup'"
 
 echo.
 echo Script execution completed.
