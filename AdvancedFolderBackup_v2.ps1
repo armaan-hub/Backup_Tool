@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Advanced Real-Time Folder Backup Tool with Cross-Computer Compatibility
@@ -508,8 +508,8 @@ function New-ScheduledTask {
         Write-Log "Scheduled task '$script:TaskName' created successfully"
         Write-Host "Task scheduled successfully!" -ForegroundColor Green
         Write-Host "The backup will run automatically at:" -ForegroundColor Yellow
-        Write-Host "  • System Startup"
-        Write-Host "  • User Logon"
+        Write-Host "   System Startup"
+        Write-Host "   User Logon"
         return $true
     }
     catch {
@@ -540,14 +540,14 @@ function Stop-BackupService {
         if ($task) {
             Disable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null
             Write-Log "Scheduled task disabled: $script:TaskName"
-            Write-Host "✓ Scheduled task disabled" -ForegroundColor Green
+            Write-Host " Scheduled task disabled" -ForegroundColor Green
         }
         
         # Clean up file watchers and resources
         Get-EventSubscriber | Unregister-Event -ErrorAction SilentlyContinue
         
         Write-Log "Backup service stopped successfully"
-        Write-Host "✓ Backup service stopped" -ForegroundColor Green
+        Write-Host " Backup service stopped" -ForegroundColor Green
         Write-Host "  To restart: Run this script again or wait for next scheduled startup" -ForegroundColor Gray
         return $true
     }
@@ -570,19 +570,19 @@ function Start-BackupService {
         if ($task) {
             Enable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null
             Write-Log "Scheduled task enabled: $script:TaskName"
-            Write-Host "✓ Scheduled task enabled" -ForegroundColor Green
+            Write-Host " Scheduled task enabled" -ForegroundColor Green
             
             # Run task immediately
             Start-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
             Write-Log "Scheduled task started immediately"
-            Write-Host "✓ Backup service started (running in background)" -ForegroundColor Green
+            Write-Host " Backup service started (running in background)" -ForegroundColor Green
             Write-Host "  Monitor progress in BackupLog.txt" -ForegroundColor Gray
         }
         else {
             Write-Log "Scheduled task not found: $script:TaskName"
             Write-Host "Scheduled task not found. Setting up now..." -ForegroundColor Yellow
             New-ScheduledTask
-            Write-Host "✓ Backup service created and started" -ForegroundColor Green
+            Write-Host " Backup service created and started" -ForegroundColor Green
         }
         
         return $true
@@ -605,10 +605,10 @@ function Show-ServiceControlMenu {
         
         # Check service status
         $task = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
-        $status = if ($task.Enabled) { "✓ RUNNING" } else { "✗ STOPPED" }
+        $status = if ($task -and $task.Enabled) { " RUNNING" } else { " STOPPED" }
         
         Write-Host "`nService Status: " -ForegroundColor Yellow -NoNewline
-        if ($task.Enabled) {
+        if ($task -and $task.Enabled) {
             Write-Host $status -ForegroundColor Green
         }
         else {
@@ -627,7 +627,7 @@ function Show-ServiceControlMenu {
         
         switch ($choice) {
             "1" { 
-                if ($task.Enabled) {
+                if ($task -and $task.Enabled) {
                     Write-Host "Service is already running." -ForegroundColor Yellow
                 }
                 else {
@@ -636,7 +636,7 @@ function Show-ServiceControlMenu {
                 }
             }
             "2" { 
-                if (-not $task.Enabled) {
+                if (-not ($task -and $task.Enabled)) {
                     Write-Host "Service is already stopped." -ForegroundColor Yellow
                 }
                 else {
@@ -1532,7 +1532,7 @@ function Show-MainMenu {
         
         # Check service status
         $task = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
-        $status = if ($task -and $task.Enabled) { "✓ RUNNING" } else { "✗ STOPPED" }
+        $status = if ($task -and $task.Enabled) { " RUNNING" } else { " STOPPED" }
         Write-Host "`nService Status: " -ForegroundColor Yellow -NoNewline
         if ($task -and $task.Enabled) {
             Write-Host $status -ForegroundColor Green
@@ -1542,7 +1542,7 @@ function Show-MainMenu {
         }
         
         Write-Host "`nOptions:" -ForegroundColor Yellow
-        Write-Host "  (1) Settings & Configuration" -ForegroundColor Cyan
+        Write-Host "  (1) Settings and Configuration" -ForegroundColor Cyan
         Write-Host "  (2) Service Control (Start/Stop)" -ForegroundColor Cyan
         Write-Host "  (3) View Service Log" -ForegroundColor Cyan
         Write-Host "  (4) Exit" -ForegroundColor Cyan
@@ -1616,8 +1616,8 @@ function Main {
             "Status" {
                 $task = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
                 if ($task) {
-                    $statusText = if ($task.Enabled) { "RUNNING" } else { "STOPPED" }
-                    Write-Host "Service Status: $statusText" -ForegroundColor $(if ($task.Enabled) { "Green" } else { "Yellow" })
+                    $statusText = if ($task -and $task.Enabled) { "RUNNING" } else { "STOPPED" }
+                    Write-Host "Service Status: $statusText" -ForegroundColor $(if ($task -and $task.Enabled) { "Green" } else { "Yellow" })
                 }
                 else {
                     Write-Host "Service not configured" -ForegroundColor Yellow
