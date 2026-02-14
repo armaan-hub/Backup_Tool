@@ -985,9 +985,6 @@ function Start-FileSystemWatcher {
             while ($true) {
                 Start-Sleep -Seconds 10
                 
-                # Flush log buffer every 10 seconds to retain recent logs on disk
-                Flush-LogBuffer
-                
                 # Periodic file scanner - catches changes that FileSystemWatcher might miss
                 # This is especially important for OneDrive folders
                 try {
