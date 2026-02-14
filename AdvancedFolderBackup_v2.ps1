@@ -491,6 +491,97 @@ function New-ScheduledTask {
 }
 
 # ============================================================================
+# SYSTEM TRAY ICON
+# ============================================================================
+
+function New-NotifyIcon {
+    param([BackupConfig]$Config)
+    
+    try {
+        # Load required assemblies
+        [void][System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+        [void][System.Reflection.Assembly]::LoadWithPartialName("System.Drawing")
+        
+        # Create NotifyIcon
+        $script:NotifyIcon = New-Object System.Windows.Forms.NotifyIcon
+        $script:NotifyIcon.Icon = [System.Drawing.SystemIcons]::Information
+        $script:NotifyIcon.Text = "Advanced Folder Backup - Running`nSource: $(Split-Path -Leaf $Config.SourcePath)`nStatus: Active"
+        $script:NotifyIcon.Visible = $true
+        
+        # Create context menu
+        $script:ContextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+        
+        # Status menu item (read-only)
+        $statusItem = $script:ContextMenu.Items.Add("Status: Monitoring Files")
+        $statusItem.Enabled = $false
+        
+        # Show folder menu item
+        $showSourceItem = $script:ContextMenu.Items.Add("Open Source Folder")
+        $showSourceItem.add_Click({
+            try {
+                Invoke-Item $Config.SourcePath
+            } catch {
+                Write-Log "Could not open source folder: $($_.Exception.Message)" "WARN"
+            }
+        })
+        
+        # Show backup folder menu item
+        $showBackupItem = $script:ContextMenu.Items.Add("Open Backup Folder")
+        $showBackupItem.add_Click({
+            try {
+                Invoke-Item $Config.DestinationPath
+            } catch {
+                Write-Log "Could not open backup folder: $($_.Exception.Message)" "WARN"
+            }
+        })
+        
+        # Separator
+        $script:ContextMenu.Items.Add("-") | Out-Null
+        
+        # Exit menu item
+        $exitItem = $script:ContextMenu.Items.Add("Exit Backup Tool")
+        $exitItem.add_Click({
+            Write-Log "User stopped backup tool from system tray"
+            $script:NotifyIcon.Visible = $false
+            $script:NotifyIcon.Dispose()
+            exit 0
+        })
+        
+        $script:NotifyIcon.ContextMenuStrip = $script:ContextMenu
+        
+        Write-Log "System tray icon created successfully"
+        return $true
+    }
+    catch {
+        Write-Log "Error creating system tray icon: $($_.Exception.Message)" "WARN"
+        return $false
+    }
+}
+
+function Update-NotifyIcon {
+    param(
+        [string]$Status = "Monitoring",
+        [string]$FilesBackedUp = "0"
+    )
+    
+    if ($script:NotifyIcon) {
+        $tooltip = "Advanced Folder Backup`nStatus: $Status`nFiles Backed Up: $FilesBackedUp`nClick to view options"
+        if ($tooltip.Length -gt 63) {
+            $tooltip = $tooltip.Substring(0, 60) + "..."
+        }
+        $script:NotifyIcon.Text = $tooltip
+    }
+}
+
+function Cleanup-NotifyIcon {
+    if ($script:NotifyIcon) {
+        $script:NotifyIcon.Visible = $false
+        $script:NotifyIcon.Dispose()
+        Write-Log "System tray icon cleaned up"
+    }
+}
+
+# ============================================================================
 # FILE HANDLING
 # ============================================================================
 # CLOUD DRIVE MANAGEMENT
@@ -628,6 +719,9 @@ function Copy-FileWithRetry {
                 if ($cloudProvider) {
                     Free-CloudDriveSpace -FilePath $DestinationPath -CloudProvider $cloudProvider
                 }
+                
+                # Update tray icon status
+                Update-NotifyIcon -Status "Backing up files" -FilesBackedUp "..."
                 
                 return $true
             }
@@ -933,6 +1027,15 @@ function Start-BackgroundMode {
     }
     
     Write-Log "Ready - waiting for file changes in source folder..."
+    
+    # Create system tray icon
+    Write-Log "Creating system tray icon..."
+    New-NotifyIcon -Config $Config
+    
+    # Setup cleanup on exit
+    $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+        Cleanup-NotifyIcon
+    }
     
     # Archive management
     Invoke-ArchiveManagement -Config $Config
