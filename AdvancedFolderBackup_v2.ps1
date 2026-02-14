@@ -147,7 +147,8 @@ function Write-Log {
     param(
         [string]$Message,
         [ValidateSet("INFO", "WARN", "ERROR")]
-        [string]$Level = "INFO"
+        [string]$Level = "INFO",
+        [switch]$Flush
     )
     
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -161,17 +162,37 @@ function Write-Log {
         }
     )
     
-    # Initialize log file if not set
+    # Initialize log file and buffer if not set
     if (-not $script:LogFile) {
         $script:LogFile = Join-Path (Split-Path -Parent $script:ConfigFile) "BackupLog.txt"
+        $script:LogBuffer = @()
+        $script:LogBufferSize = 50
     }
     
-    Add-Content -Path $script:LogFile -Value $logEntry -ErrorAction SilentlyContinue
+    # Buffer log entries to reduce disk I/O (write in batches)
+    $script:LogBuffer += $logEntry
+    
+    # Auto-flush for WARN/ERROR, or if buffer reaches threshold
+    $shouldFlush = $Flush -or ($Level -in @("WARN", "ERROR")) -or ($script:LogBuffer.Count -ge $script:LogBufferSize)
+    
+    if ($shouldFlush) {
+        if ($script:LogBuffer.Count -gt 0) {
+            $script:LogBuffer | Add-Content -Path $script:LogFile -ErrorAction SilentlyContinue
+            $script:LogBuffer = @()
+        }
+    }
 }
 
 # ============================================================================
 # SYSTEM INFORMATION FUNCTIONS
 # ============================================================================
+
+function Flush-LogBuffer {
+    if ($script:LogBuffer -and $script:LogBuffer.Count -gt 0) {
+        $script:LogBuffer | Add-Content -Path $script:LogFile -ErrorAction SilentlyContinue
+        $script:LogBuffer = @()
+    }
+}
 
 function Get-SystemInfo {
     return @{
@@ -542,6 +563,7 @@ function New-NotifyIcon {
         $exitItem = $script:ContextMenu.Items.Add("Exit Backup Tool")
         $exitItem.add_Click({
             Write-Log "User stopped backup tool from system tray"
+            Flush-LogBuffer
             $script:NotifyIcon.Visible = $false
             $script:NotifyIcon.Dispose()
             exit 0
@@ -711,19 +733,42 @@ function Copy-FileWithRetry {
     for ($i = 1; $i -le $MaxRetries; $i++) {
         try {
             if (Test-FileReady -FilePath $SourcePath) {
-                Copy-Item -Path $SourcePath -Destination $DestinationPath -Force
-                Write-Log "File copied: $SourcePath"
+                # Use robocopy for faster, multi-threaded transfer with resume capability
+                # /Z: Resumable mode (for interrupted transfers)
+                # /R:3: Retry 3 times on failed files
+                # /W:2: Wait 2 seconds between retries
+                # /NJH /NJS: No job header/summary (cleaner logging)
+                $robocopyArgs = @(
+                    '"' + (Split-Path -Parent $SourcePath) + '"',
+                    '"' + $destDir + '"',
+                    '"' + (Split-Item -Leaf $SourcePath) + '"',
+                    '/Z',
+                    '/R:3',
+                    '/W:2',
+                    '/NJH',
+                    '/NJS'
+                )
                 
-                # Check if backup is in cloud drive and free up space
-                $cloudProvider = Detect-CloudDrive -FilePath $DestinationPath
-                if ($cloudProvider) {
-                    Free-CloudDriveSpace -FilePath $DestinationPath -CloudProvider $cloudProvider
+                $output = & robocopy $robocopyArgs 2>&1
+                
+                # robocopy exit codes: 0,1 = success, 16 = failure
+                if ($LASTEXITCODE -le 1 -or $LASTEXITCODE -eq 2) {
+                    Write-Log "File copied via robocopy: $SourcePath" "INFO"
+                    
+                    # Check if backup is in cloud drive and free up space
+                    $cloudProvider = Detect-CloudDrive -FilePath $DestinationPath
+                    if ($cloudProvider) {
+                        Free-CloudDriveSpace -FilePath $DestinationPath -CloudProvider $cloudProvider
+                    }
+                    
+                    # Update tray icon status
+                    Update-NotifyIcon -Status "Backing up files" -FilesBackedUp "..."
+                    
+                    return $true
                 }
-                
-                # Update tray icon status
-                Update-NotifyIcon -Status "Backing up files" -FilesBackedUp "..."
-                
-                return $true
+                else {
+                    Write-Log "Robocopy failed (attempt $i, exit code $LASTEXITCODE): $SourcePath" "WARN"
+                }
             }
             else {
                 Write-Log "File not ready for copying (attempt $i): $SourcePath" "WARN"
@@ -940,6 +985,9 @@ function Start-FileSystemWatcher {
             while ($true) {
                 Start-Sleep -Seconds 10
                 
+                # Flush log buffer every 10 seconds to retain recent logs on disk
+                Flush-LogBuffer
+                
                 # Periodic file scanner - catches changes that FileSystemWatcher might miss
                 # This is especially important for OneDrive folders
                 try {
@@ -983,8 +1031,6 @@ function Start-FileSystemWatcher {
                 catch {
                     Write-Log "Error in periodic file scan: $($_.Exception.Message)" "WARN"
                 }
-                
-                Write-Log "Monitoring active - Source: $($Config.SourcePath)"
             }
         }
         finally {
@@ -1039,6 +1085,7 @@ function Start-BackgroundMode {
     # Setup cleanup on exit
     $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
         Cleanup-NotifyIcon
+        Flush-LogBuffer
     }
     
     # Archive management
