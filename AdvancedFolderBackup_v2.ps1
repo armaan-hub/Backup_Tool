@@ -129,6 +129,8 @@ class BackupConfig {
     [string]$CreatedDateTime = ""
     [string]$OSVersion = ""
     [bool]$UseRelativePaths = $false
+    [bool]$EnableCloudSpaceFreeing = $true
+    [bool]$FreeSpaceOnCloudDrives = $true
     
     [void] ExpandPaths() {
         $this.SourcePath = Expand-EnvironmentPath $this.SourcePath
@@ -271,6 +273,8 @@ function Get-BackupConfig {
             $config.ComputerName = $configJson.ComputerName
             $config.OSVersion = $configJson.OSVersion
             $config.UseRelativePaths = $configJson.UseRelativePaths
+            $config.EnableCloudSpaceFreeing = if ($configJson.EnableCloudSpaceFreeing) { $configJson.EnableCloudSpaceFreeing } else { $true }
+            $config.FreeSpaceOnCloudDrives = if ($configJson.FreeSpaceOnCloudDrives) { $configJson.FreeSpaceOnCloudDrives } else { $true }
             
             # Expand environment variables in paths
             $config.ExpandPaths()
@@ -861,6 +865,126 @@ function Invoke-ArchiveManagement {
 }
 
 # ============================================================================
+# CLOUD SPACE FREEING - RECURSIVE
+# ============================================================================
+
+function Invoke-CloudSpaceFreeup {
+    param([BackupConfig]$Config)
+    
+    Write-Log "Starting cloud space freeing process"
+    
+    if (-not $Config) {
+        Write-Log "No configuration provided for cloud space freeing" "WARN"
+        return $false
+    }
+    
+    # Check if cloud space freeing is enabled
+    if (-not $Config.EnableCloudSpaceFreeing -or -not $Config.FreeSpaceOnCloudDrives) {
+        Write-Log "Cloud space freeing is disabled in configuration" "INFO"
+        return $true
+    }
+    
+    try {
+        $freedCount = 0
+        $failedCount = 0
+        
+        # Process destination path
+        if (Test-Path $Config.DestinationPath) {
+            $cloudProvider = Detect-CloudDrive -FilePath $Config.DestinationPath
+            if ($cloudProvider) {
+                Write-Log "Cloud drive detected in Destination ($cloudProvider): $($Config.DestinationPath)"
+                
+                # Get all files and subdirectories recursively
+                $allItems = Get-ChildItem -Path $Config.DestinationPath -Recurse -Force -ErrorAction SilentlyContinue
+                
+                foreach ($item in $allItems) {
+                    if (-not $item.PSIsContainer) {  # Only mark files, not directories
+                        if (Invoke-RecursiveCloudMarkup -FilePath $item.FullPath -CloudProvider $cloudProvider) {
+                            $freedCount++
+                        }
+                        else {
+                            $failedCount++
+                        }
+                    }
+                }
+            }
+        }
+        
+        # Process archive path
+        if ($Config.ArchivePath -and (Test-Path $Config.ArchivePath)) {
+            $cloudProvider = Detect-CloudDrive -FilePath $Config.ArchivePath
+            if ($cloudProvider) {
+                Write-Log "Cloud drive detected in Archive ($cloudProvider): $($Config.ArchivePath)"
+                
+                # Get all archive files
+                $archiveFiles = Get-ChildItem -Path $Config.ArchivePath -Filter "*.zip" -Force -ErrorAction SilentlyContinue
+                
+                foreach ($file in $archiveFiles) {
+                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullPath -CloudProvider $cloudProvider) {
+                        $freedCount++
+                    }
+                    else {
+                        $failedCount++
+                    }
+                }
+            }
+        }
+        
+        Write-Log "Cloud space freeing completed: $freedCount files marked as online-only, $failedCount failures"
+        return $true
+    }
+    catch {
+        Write-Log "Error during cloud space freeing: $($_.Exception.Message)" "ERROR"
+        return $false
+    }
+}
+
+function Invoke-RecursiveCloudMarkup {
+    param(
+        [string]$FilePath,
+        [string]$CloudProvider
+    )
+    
+    if (-not (Test-Path $FilePath)) {
+        return $false
+    }
+    
+    try {
+        switch ($CloudProvider) {
+            'OneDrive' {
+                # Use attrib +U to mark file as online-only in OneDrive
+                # This frees up local storage space
+                $cmd = attrib +U "$FilePath" 2>$null
+                if ($?) {
+                    Write-Log "OneDrive: Marked online-only: $(Split-Path -Leaf $FilePath)" "INFO"
+                    return $true
+                }
+                else {
+                    Write-Log "OneDrive: Failed to mark online-only: $(Split-Path -Leaf $FilePath)" "WARN"
+                    return $false
+                }
+            }
+            'Google Drive' {
+                Write-Log "Google Drive: Selective sync needs to be configured manually in Drive app" "WARN"
+                return $false
+            }
+            'Dropbox' {
+                Write-Log "Dropbox: Selective sync needs to be configured manually in Dropbox app" "WARN"
+                return $false
+            }
+            default {
+                Write-Log "Unknown cloud provider: $CloudProvider" "WARN"
+                return $false
+            }
+        }
+    }
+    catch {
+        Write-Log "Error marking file as online-only ($FilePath): $($_.Exception.Message)" "WARN"
+        return $false
+    }
+}
+
+# ============================================================================
 # FILE SYSTEM WATCHER
 # ============================================================================
 
@@ -1061,6 +1185,10 @@ function Start-BackgroundMode {
     
     Write-Log "Ready - waiting for file changes in source folder..."
     
+    # Free up cloud storage space at startup (for any existing backed-up files)
+    Write-Log "Performing cloud space freeing on startup..."
+    Invoke-CloudSpaceFreeup -Config $Config
+    
     # Initialize Windows.Forms for system tray (message pump)
     [void][System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
     [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -1077,6 +1205,9 @@ function Start-BackgroundMode {
     
     # Archive management
     Invoke-ArchiveManagement -Config $Config
+    
+    # Free up cloud storage space on backup completion
+    Invoke-CloudSpaceFreeup -Config $Config
     
     # Start real-time monitoring (individual file tracking)
     Start-FileSystemWatcher -Config $Config

@@ -1,0 +1,19 @@
+﻿{
+    "Version":  "2.0",
+    "ComputerName":  "ARMAAN-PC",
+    "CreatedDateTime":  "2026-02-14 14:26:02",
+    "OSVersion":  "Microsoft Windows NT 10.0.26200.0",
+    "UseRelativePaths":  false,
+    "SourcePath":  "C:\\Users\\armaa\\OneDrive - The Era Corporations\\Study\\AI Class\\VBA",
+    "SourcePaths":  [
+        "C:\\Users\\armaa\\OneDrive - The Era Corporations\\Study\\AI Class\\VBA",
+        "C:\\Users\\armaa\\OneDrive\\Desktop\\Back-up",
+        "C:\\Users\\armaa\\OneDrive\\Desktop\\Back-up\\BackupArchives"
+    ],
+    "DestinationPath":  "C:\\Users\\armaa\\OneDrive\\Desktop\\Back-up\\VBA",
+    "ArchivePath":  "C:\\Users\\armaa\\OneDrive\\Desktop\\Back-up\\BackupArchives",
+    "DaysToKeep":  7,
+    "EnableCloudSpaceFreeing":  true,
+    "FreeSpaceOnCloudDrives":  true,
+    "LastBackup":  "\/Date(1771064762152)\/"
+}
