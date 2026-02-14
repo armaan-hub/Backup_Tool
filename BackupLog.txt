@@ -1,0 +1,4 @@
+[2026-02-14 09:42:19] [INFO] Monitoring active - Source: C:\Users\armaa\OneDrive - The Era Corporations\Study\AI Class\VBA
+[2026-02-14 09:42:24] [INFO] Monitoring active - Source: C:\Users\armaa\OneDrive - The Era Corporations\Study\AI Class\VBA
+[2026-02-14 09:42:34] [INFO] Monitoring active - Source: C:\Users\armaa\OneDrive - The Era Corporations\Study\AI Class\VBA
+[2026-02-14 09:42:39] [INFO] Monitoring active - Source: C:\Users\armaa\OneDrive - The Era Corporations\Study\AI Class\VBA
