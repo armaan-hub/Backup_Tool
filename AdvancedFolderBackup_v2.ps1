@@ -1057,7 +1057,7 @@ function Invoke-ProactiveCloudSpaceFreeup {
                         continue
                     }
                     
-                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullPath -CloudProvider $cloudProvider) {
+                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullName -CloudProvider $cloudProvider) {
                         $freedCount++
                     }
                     else {
@@ -1082,7 +1082,7 @@ function Invoke-ProactiveCloudSpaceFreeup {
                         continue
                     }
                     
-                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullPath -CloudProvider $cloudProvider) {
+                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullName -CloudProvider $cloudProvider) {
                         $freedCount++
                     }
                     else {
@@ -1141,7 +1141,7 @@ function Invoke-CloudSpaceFreeup {
                 
                 foreach ($item in $allItems) {
                     if (-not $item.PSIsContainer) {  # Only mark files, not directories
-                        if (Invoke-RecursiveCloudMarkup -FilePath $item.FullPath -CloudProvider $cloudProvider) {
+                        if (Invoke-RecursiveCloudMarkup -FilePath $item.FullName -CloudProvider $cloudProvider) {
                             $freedCount++
                         }
                         else {
@@ -1162,7 +1162,7 @@ function Invoke-CloudSpaceFreeup {
                 $archiveFiles = Get-ChildItem -Path $Config.ArchivePath -Filter "*.zip" -Force -ErrorAction SilentlyContinue
                 
                 foreach ($file in $archiveFiles) {
-                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullPath -CloudProvider $cloudProvider) {
+                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullName -CloudProvider $cloudProvider) {
                         $freedCount++
                     }
                     else {
