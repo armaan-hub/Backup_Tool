@@ -1021,7 +1021,93 @@ function Invoke-ArchiveManagement {
 }
 
 # ============================================================================
-# CLOUD SPACE FREEING - RECURSIVE
+# CLOUD SPACE FREEING - PRE-BACKUP (Source & Destination)
+# ============================================================================
+
+function Invoke-ProactiveCloudSpaceFreeup {
+    param([BackupConfig]$Config)
+    
+    Write-Log "Pre-backup cloud space optimization starting..."
+    
+    if (-not $Config) {
+        return $false
+    }
+    
+    # Check if cloud space freeing is enabled
+    if (-not $Config.EnableCloudSpaceFreeing -or -not $Config.FreeSpaceOnCloudDrives) {
+        return $true
+    }
+    
+    try {
+        $freedCount = 0
+        $failedCount = 0
+        
+        # === FREE UP SPACE ON SOURCE PATH (if it's on cloud) ===
+        if (Test-Path $Config.SourcePath) {
+            $cloudProvider = Detect-CloudDrive -FilePath $Config.SourcePath
+            if ($cloudProvider) {
+                Write-Log "Cloud drive detected in Source ($cloudProvider): Freeing up space..."
+                
+                # Get all files in source recursively
+                $sourceFiles = Get-ChildItem -Path $Config.SourcePath -Recurse -File -Force -ErrorAction SilentlyContinue
+                
+                foreach ($file in $sourceFiles) {
+                    # Skip temp and lock files
+                    if ($file.Name -match '\.(tmp|temp|lock)$' -or $file.Name -match '~\$') {
+                        continue
+                    }
+                    
+                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullPath -CloudProvider $cloudProvider) {
+                        $freedCount++
+                    }
+                    else {
+                        $failedCount++
+                    }
+                }
+                
+                Write-Log "Source path cleanup: $freedCount files marked as online-only"
+            }
+        }
+        
+        # === FREE UP SPACE ON DESTINATION PATH (if it's on cloud) ===
+        if (Test-Path $Config.DestinationPath) {
+            $cloudProvider = Detect-CloudDrive -FilePath $Config.DestinationPath
+            if ($cloudProvider) {
+                Write-Log "Cloud drive detected in Destination ($cloudProvider): Freeing up space..."
+                
+                $destFiles = Get-ChildItem -Path $Config.DestinationPath -Recurse -File -Force -ErrorAction SilentlyContinue
+                
+                foreach ($file in $destFiles) {
+                    if ($file.Name -match '\.(tmp|temp|lock)$' -or $file.Name -match '~\$') {
+                        continue
+                    }
+                    
+                    if (Invoke-RecursiveCloudMarkup -FilePath $file.FullPath -CloudProvider $cloudProvider) {
+                        $freedCount++
+                    }
+                    else {
+                        $failedCount++
+                    }
+                }
+                
+                Write-Log "Destination path cleanup: $freedCount files marked as online-only"
+            }
+        }
+        
+        if ($freedCount -gt 0) {
+            Write-Log "Pre-backup optimization completed: $freedCount files optimized, $failedCount skipped"
+        }
+        
+        return $true
+    }
+    catch {
+        Write-Log "Error during pre-backup cloud space freeing: $($_.Exception.Message)" "ERROR"
+        return $false
+    }
+}
+
+# ============================================================================
+# CLOUD SPACE FREEING - POST-BACKUP (Destination & Archive)
 # ============================================================================
 
 function Invoke-CloudSpaceFreeup {
@@ -1158,6 +1244,10 @@ function Start-FileSystemWatcher {
         $watcher.EnableRaisingEvents = $true
         $watcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor [System.IO.NotifyFilters]::DirectoryName -bor [System.IO.NotifyFilters]::LastWrite
         
+        # Counter for throttling cloud space freeing (every 10 operations)
+        $script:BackupOperationCount = 0
+        $script:LastSpaceFreedTime = Get-Date
+        
         # Define event handler for individual file operations
         $action = {
             param($source, $e)
@@ -1191,10 +1281,23 @@ function Start-FileSystemWatcher {
                             Write-Log "Created folder structure: $destDir"
                         }
                         
+                        # Proactive cloud space freeing every 10 operations (reduces load before backup)
+                        $script:BackupOperationCount++
+                        if ($script:BackupOperationCount % 10 -eq 0) {
+                            Write-Log "Performing pre-backup cloud space optimization (operation #$($script:BackupOperationCount))..."
+                            Invoke-ProactiveCloudSpaceFreeup -Config $Config
+                        }
+                        
                         # Copy the new file with higher retry count for locked files
                         Write-Log "New file detected: $relativePath - Attempting backup..."
                         Copy-FileWithRetry -SourcePath $sourcePath -DestinationPath $destinationPath -MaxRetries 5
                         Write-Log "Backed up new file: $relativePath"
+                        
+                        # Post-backup cloud space cleanup every 10 operations
+                        if ($script:BackupOperationCount % 10 -eq 0) {
+                            Write-Log "Performing post-backup cloud space cleanup (operation #$($script:BackupOperationCount))..."
+                            Invoke-CloudSpaceFreeup -Config $Config
+                        }
                     }
                     elseif (Test-Path $sourcePath -PathType Container) {
                         # Create folder in destination
@@ -1214,9 +1317,22 @@ function Start-FileSystemWatcher {
                             New-Item -ItemType Directory -Path $destDir -Force | Out-Null
                         }
                         
+                        # Proactive cloud space freeing every 10 operations (reduces load before backup)
+                        $script:BackupOperationCount++
+                        if ($script:BackupOperationCount % 10 -eq 0) {
+                            Write-Log "Performing pre-backup cloud space optimization (operation #$($script:BackupOperationCount))..."
+                            Invoke-ProactiveCloudSpaceFreeup -Config $Config
+                        }
+                        
                         Write-Log "File change detected: $relativePath - Attempting backup..."
                         Copy-FileWithRetry -SourcePath $sourcePath -DestinationPath $destinationPath -MaxRetries 8
                         Write-Log "Updated/backed up modified file: $relativePath"
+                        
+                        # Post-backup cloud space cleanup every 10 operations
+                        if ($script:BackupOperationCount % 10 -eq 0) {
+                            Write-Log "Performing post-backup cloud space cleanup (operation #$($script:BackupOperationCount))..."
+                            Invoke-CloudSpaceFreeup -Config $Config
+                        }
                     }
                 }
                 'Deleted' {
@@ -1341,8 +1457,12 @@ function Start-BackgroundMode {
     
     Write-Log "Ready - waiting for file changes in source folder..."
     
-    # Free up cloud storage space at startup (for any existing backed-up files)
-    Write-Log "Performing cloud space freeing on startup..."
+    # Pre-backup cloud space optimization (frees source & destination to prepare for backup)
+    Write-Log "Performing pre-backup cloud space optimization..."
+    Invoke-ProactiveCloudSpaceFreeup -Config $Config
+    
+    # Post-backup cloud storage space cleanup (frees destination & archive of already-backed-up files)
+    Write-Log "Performing post-backup cloud space cleanup..."
     Invoke-CloudSpaceFreeup -Config $Config
     
     # Initialize Windows.Forms for system tray (message pump)
