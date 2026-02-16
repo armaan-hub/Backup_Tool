@@ -26,7 +26,7 @@
     Optional: Override destination path from command line (for automation)
 
 .PARAMETER DaysToKeep
-    Optional: Override retention days from command line (1-365)
+    Optional: Override retention days from command line (0-365). 0 = No zip backup (real-time sync only), 1-365 = Daily zip archives
 
 .EXAMPLE
     .\AdvancedFolderBackup.ps1 -Mode Setup
@@ -39,6 +39,10 @@
 .EXAMPLE
     .\AdvancedFolderBackup.ps1 -Mode Setup -SourcePath "D:\Documents" -DestinationPath "E:\Backup\Documents" -DaysToKeep 30
     Setup with predefined parameters
+
+.EXAMPLE
+    .\AdvancedFolderBackup.ps1 -Mode Setup -SourcePath "D:\Documents" -DestinationPath "E:\Backup\Documents" -DaysToKeep 0
+    Setup with no zip backup (real-time sync only)
 
 .AUTHOR
     Created for Advanced Backup Management
@@ -62,7 +66,7 @@ param(
     [string]$DestinationPath = $null,
     
     [Parameter(Mandatory = $false)]
-    [ValidateRange(1, 365)]
+    [ValidateRange(0, 365)]
     [int]$DaysToKeep = $null,
     
     [Parameter(Mandatory = $false)]
@@ -412,26 +416,28 @@ function Start-SetupMode {
     # Get Retention Days
     do {
         try {
-            if ($DaysToKeep -gt 0) {
+            if ($DaysToKeep -ge 0) {
                 $days = $DaysToKeep
                 Write-Host "Retention days (from parameter): $days"
-                $DaysToKeep = 0  # Clear for next iteration
+                $DaysToKeep = -1  # Clear for next iteration
             }
             else {
-                $daysInput = Read-Host "How many days of backup history do you want to keep? (1-365)"
+                Write-Host "How many days of backup history do you want to keep?"
+                Write-Host "(0 = No zip backup, only real-time sync | 1-365 = Create daily zip archives)" -ForegroundColor Gray
+                $daysInput = Read-Host "Enter days"
                 $days = [int]$daysInput
             }
             
-            if ($days -lt 1 -or $days -gt 365) {
-                Write-Host "Please enter a number between 1 and 365." -ForegroundColor Red
-                $days = 0
+            if ($days -lt 0 -or $days -gt 365) {
+                Write-Host "Please enter a number between 0 and 365. (0 = no zip backup)" -ForegroundColor Red
+                $days = -1
             }
         }
         catch {
             Write-Host "Please enter a valid number." -ForegroundColor Red
-            $days = 0
+            $days = -1
         }
-    } while ($days -eq 0)
+    } while ($days -eq -1)
     $config.DaysToKeep = $days
     $config.LastBackup = Get-Date
     $config.UseRelativePaths = $false
@@ -444,7 +450,12 @@ function Start-SetupMode {
         Write-Host "  Source: $($config.SourcePath)"
         Write-Host "  Destination: $($config.DestinationPath)"
         Write-Host "  Archive: $($config.ArchivePath)"
-        Write-Host "  Retention: $($config.DaysToKeep) days"
+        if ($config.DaysToKeep -eq 0) {
+            Write-Host "  Retention: No zip backup - Real-time sync only"
+        }
+        else {
+            Write-Host "  Retention: $($config.DaysToKeep) days"
+        }
         
         # Setup Task Scheduler
         $setupTask = Read-Host "`nDo you want to set up automatic scheduling? (y/n)"
@@ -940,6 +951,12 @@ function Copy-FileWithRetry {
 
 function Invoke-ArchiveManagement {
     param([BackupConfig]$Config)
+    
+    # Skip archive management if DaysToKeep is 0 (no zip backup mode)
+    if ($Config.DaysToKeep -eq 0) {
+        Write-Log "Archive management disabled (DaysToKeep = 0) - Real-time sync only"
+        return $true
+    }
     
     Write-Log "Starting archive management process"
     
@@ -1440,7 +1457,12 @@ function Start-BackgroundMode {
     Write-Log "Source: $($Config.SourcePath)"
     Write-Log "Destination: $($Config.DestinationPath)"
     Write-Log "Archive: $($Config.ArchivePath)"
-    Write-Log "Retention: $($Config.DaysToKeep) days"
+    if ($Config.DaysToKeep -eq 0) {
+        Write-Log "Retention: No zip backup - Real-time sync only"
+    }
+    else {
+        Write-Log "Retention: $($Config.DaysToKeep) days"
+    }
     Write-Log "Backup Mode: Individual File Tracking (only modified/new files)"
     
     # Ensure destination folder exists
@@ -1578,10 +1600,17 @@ function Update-BackupDestinationPath {
 function Update-RetentionDays {
     param([BackupConfig]$Config)
     
-    Write-Host "`nCurrent Retention: $($Config.DaysToKeep) days" -ForegroundColor Yellow
+    if ($Config.DaysToKeep -eq 0) {
+        Write-Host "`nCurrent Retention: No zip backup - Real-time sync only" -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "`nCurrent Retention: $($Config.DaysToKeep) days" -ForegroundColor Yellow
+    }
+    
     do {
         try {
-            $daysInput = Read-Host "Enter days (1-365) or press Enter to cancel"
+            Write-Host "Set retention (0 = no zip backup | 1-365 = daily zip archives):"
+            $daysInput = Read-Host "Enter days or press Enter to cancel"
             
             if ([string]::IsNullOrWhiteSpace($daysInput)) {
                 Write-Host "Cancelled." -ForegroundColor Yellow
@@ -1589,20 +1618,25 @@ function Update-RetentionDays {
             }
             
             $days = [int]$daysInput
-            if ($days -lt 1 -or $days -gt 365) {
-                Write-Host "Enter a number between 1 and 365." -ForegroundColor Red
-                $days = 0
+            if ($days -lt 0 -or $days -gt 365) {
+                Write-Host "Enter a number between 0 and 365. (0 = no zip backup)" -ForegroundColor Red
+                $days = -1
             }
         }
         catch {
             Write-Host "Invalid number." -ForegroundColor Red
-            $days = 0
+            $days = -1
         }
-    } while ($days -eq 0)
+    } while ($days -eq -1)
     
     $Config.DaysToKeep = $days
     if (Set-BackupConfig -Config $Config) {
-        Write-Host "Retention updated!  $($Config.DaysToKeep) days" -ForegroundColor Green
+        if ($days -eq 0) {
+            Write-Host "Retention updated!  No zip backup - Real-time sync only" -ForegroundColor Green
+        }
+        else {
+            Write-Host "Retention updated!  $($Config.DaysToKeep) days" -ForegroundColor Green
+        }
         return $Config
     }
     return $null
@@ -1619,7 +1653,12 @@ function Show-SettingsMenu {
         Write-Host "`nCurrent Configuration:" -ForegroundColor Yellow
         Write-Host "  Source:      $(Split-Path -Leaf $Config.SourcePath)" -ForegroundColor White
         Write-Host "  Destination: $(Split-Path -Leaf $Config.DestinationPath)" -ForegroundColor White
-        Write-Host "  Retention:   $($Config.DaysToKeep) days" -ForegroundColor White
+        if ($Config.DaysToKeep -eq 0) {
+            Write-Host "  Retention:   No zip backup - Real-time sync only" -ForegroundColor White
+        }
+        else {
+            Write-Host "  Retention:   $($Config.DaysToKeep) days" -ForegroundColor White
+        }
         Write-Host "`nOptions:" -ForegroundColor Yellow
         Write-Host "  (1) Change Source Folder" -ForegroundColor Cyan
         Write-Host "  (2) Change Destination Folder" -ForegroundColor Cyan
