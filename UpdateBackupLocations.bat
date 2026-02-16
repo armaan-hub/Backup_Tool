@@ -245,16 +245,13 @@ if "!VALIDATION!"=="invalid" (
     goto change_retention
 )
 
-powershell -NoProfile -Command ^
-  "try { " ^
-  "$json = Get-Content '%CONFIG_FILE%' | ConvertFrom-Json; " ^
-  "$json.DaysToKeep = [int]'!new_days!'; " ^
-  "$json | ConvertTo-Json | Set-Content '%CONFIG_FILE%'; " ^
-  "Write-Host 'Retention days updated successfully!' -ForegroundColor Green; " ^
-  "if ([int]'!new_days!' -eq 0) { Write-Host 'Backup mode: Real-time sync only (no zip archives)' -ForegroundColor Yellow } else { Write-Host 'Backup mode: Daily archives kept for !new_days! days' -ForegroundColor Cyan } " ^
-  "} catch { " ^
-  "Write-Host 'Error updating config: ' + $_.Exception.Message -ForegroundColor Red; " ^
-  "}"
+powershell -NoProfile -Command "$json = Get-Content '%CONFIG_FILE%' | ConvertFrom-Json; $json.DaysToKeep = [int]'!new_days!'; $json | ConvertTo-Json | Set-Content '%CONFIG_FILE%'; Write-Host 'Retention days updated successfully!' -ForegroundColor Green"
+
+if "!new_days!"=="0" (
+    powershell -NoProfile -Command "Write-Host 'Backup mode: Real-time sync only (no zip archives)' -ForegroundColor Yellow"
+) else (
+    powershell -NoProfile -Command "Write-Host 'Backup mode: Daily archives kept for !new_days! days' -ForegroundColor Cyan"
+)
 
 timeout /t 3 >nul
 goto menu
